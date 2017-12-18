@@ -79,6 +79,12 @@ public final class CacheControl {
   }
 
   /**
+   * 在一个响应里，no-cache 字段经常会有误解，no-cache字段并不妨碍我们缓存响应，
+   * 只是意味着我们必须在返回之前验证原始服务器的响应，我们可以通过get方法来做到这一点
+   *
+   * no-cache如果出现在响应的头部，不是表示不允许对响应进行缓存，而是表示客户端需要与服务器进行再次验证，
+   * 进行一个额外的GET请求得到最新的响应
+   * 如果出现在请求的头部，则表示不适用缓存响应，即记性网络请求获取响应。
    *
    * In a response, this field's name "no-cache" is misleading. It doesn't prevent us from caching
    * the response; it only means we have to validate the response with the origin server before
@@ -90,12 +96,16 @@ public final class CacheControl {
     return noCache;
   }
 
-  /** If true, this response should not be cached. */
+  /**
+   * 对应于"no-store"，如果出现在响应头部，则表明该响应不能被缓存
+   * If true, this response should not be cached.
+   */
   public boolean noStore() {
     return noStore;
   }
 
   /**
+   * 对应"max-age"，设置缓存响应的最大存活时间。如果缓存响满足了到了最大存活时间，那么将不会再进行网络请求
    * The duration past the response's served date that it can be served without validation.
    */
   public int maxAgeSeconds() {
@@ -110,10 +120,18 @@ public final class CacheControl {
     return sMaxAgeSeconds;
   }
 
+  /**
+   * Cache-Control：private 表示客户端可以缓存
+   * @return
+   */
   public boolean isPrivate() {
     return isPrivate;
   }
 
+  /**
+   * Cache-Control：public 表示客户端和服务器都可以缓存
+   * @return
+   */
   public boolean isPublic() {
     return isPublic;
   }
@@ -122,15 +140,26 @@ public final class CacheControl {
     return mustRevalidate;
   }
 
+  /**
+   * 对应“max-stale”，缓存响应可以接受的最大过期时间，如果没有指定该参数，那么过期缓存响应将不会被使用
+   * @return
+   */
   public int maxStaleSeconds() {
     return maxStaleSeconds;
   }
 
+  /**
+   * 对应"min-fresh"，设置一个响应将会持续刷新最小秒数，如果一个响应当minFresh过去后过期了，
+   * 那么缓存响应不能被使用，需要重新进行网络请求
+   * @return
+   */
   public int minFreshSeconds() {
     return minFreshSeconds;
   }
 
   /**
+   * 对应“onlyIfCached”，用于请求头部，表明该请求只接受缓存中的响应。如果缓存中没有响应，那么返回一个状态码为504的响应。
+   *
    * This field's name "only-if-cached" is misleading. It actually means "do not use the network".
    * It is set by a client who only wants to make a request if it can be fully satisfied by the
    * cache. Cached responses that would require validation (ie. conditional gets) are not permitted
