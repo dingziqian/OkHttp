@@ -192,6 +192,11 @@ public final class Cache implements Closeable, Flushable {
     return ByteString.encodeUtf8(url.toString()).md5().hex();
   }
 
+  /**
+   * 通过request获取缓存的Response
+   * @param request
+   * @return
+   */
   @Nullable Response get(Request request) {
     String key = key(request.url());
     DiskLruCache.Snapshot snapshot;
@@ -207,12 +212,14 @@ public final class Cache implements Closeable, Flushable {
     }
 
     try {
+      // 解析meta
       entry = new Entry(snapshot.getSource(ENTRY_METADATA));
     } catch (IOException e) {
       Util.closeQuietly(snapshot);
       return null;
     }
 
+    // 解析body
     Response response = entry.response(snapshot);
 
     if (!entry.matches(request, response)) {
@@ -260,11 +267,13 @@ public final class Cache implements Closeable, Flushable {
     Entry entry = new Entry(response);
     DiskLruCache.Editor editor = null;
     try {
+      // url 最为key
       editor = cache.edit(key(response.request().url()));
       if (editor == null) {
         return null;
       }
       entry.writeTo(editor);
+      // 这里是缓存的body
       return new CacheRequestImpl(editor);
     } catch (IOException e) {
       abortQuietly(editor);
@@ -276,6 +285,11 @@ public final class Cache implements Closeable, Flushable {
     cache.remove(key(request.url()));
   }
 
+  /**
+   * 这里更新的是body信息
+   * @param cached
+   * @param network
+   */
   void update(Response cached, Response network) {
     Entry entry = new Entry(network);
     DiskLruCache.Snapshot snapshot = ((CacheResponseBody) cached.body()).snapshot;
@@ -622,6 +636,7 @@ public final class Cache implements Closeable, Flushable {
     }
 
     public void writeTo(DiskLruCache.Editor editor) throws IOException {
+      // 写入 meta信息
       BufferedSink sink = Okio.buffer(editor.newSink(ENTRY_METADATA));
 
       sink.writeUtf8(url)

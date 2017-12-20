@@ -92,10 +92,14 @@ public final class DiskLruCache implements Closeable, Flushable {
   static final String VERSION_1 = "1";
   static final long ANY_SEQUENCE_NUMBER = -1;
   static final Pattern LEGAL_KEY_PATTERN = Pattern.compile("[a-z0-9_-]{1,120}");
-  private static final String CLEAN = "CLEAN";
-  private static final String DIRTY = "DIRTY";
+  // 每一个Cache项对应两个状态副本：DIRTY，CLEAN。
+  // CLEAN表示当前可用的Cache。外部访问到cache快照均为CLEAN状态；
+  // DIRTY为编辑状态的cache。由于更新和创新都只操作DIRTY状态的副本，
+  // 实现了读和写的分离。
+  private static final String CLEAN = "CLEAN"; // 写入完成
+  private static final String DIRTY = "DIRTY"; // 正在写入
   private static final String REMOVE = "REMOVE";
-  private static final String READ = "READ";
+  private static final String READ = "READ"; // 已被读过了
 
     /*
      * This cache uses a journal file named "journal". A typical journal file
@@ -154,7 +158,7 @@ public final class DiskLruCache implements Closeable, Flushable {
   // Must be read and written when synchronized on 'this'.
   boolean initialized;
   boolean closed;
-  boolean mostRecentTrimFailed;
+  boolean mostRecentTrimFailed; // 最近的一次 Trim 失败
   boolean mostRecentRebuildFailed;
 
   /**
@@ -164,8 +168,12 @@ public final class DiskLruCache implements Closeable, Flushable {
    */
   private long nextSequenceNumber = 0;
 
-  /** Used to run 'cleanupRunnable' for journal rebuilds. */
+  /**
+   * 后台线程，用户清理工作
+   * Used to run 'cleanupRunnable' for journal rebuilds.
+   */
   private final Executor executor;
+
   private final Runnable cleanupRunnable = new Runnable() {
     public void run() {
       synchronized (DiskLruCache.this) {
@@ -174,9 +182,10 @@ public final class DiskLruCache implements Closeable, Flushable {
         }
 
         try {
-          // 调整整个cache的大小，以防止它过大
+          // 调整整个cache的大小，以防止它过大,这里面做了remove的操作
           trimToSize();
         } catch (IOException ignored) {
+          // 如果抛异常了，设置最近的一次清理失败
           mostRecentTrimFailed = true;
         }
 
@@ -274,6 +283,7 @@ public final class DiskLruCache implements Closeable, Flushable {
     }
 
     // Use a single background thread to evict entries.
+
     Executor executor = new ThreadPoolExecutor(0, 1, 60L, TimeUnit.SECONDS,
         new LinkedBlockingQueue<Runnable>(), Util.threadFactory("OkHttp DiskLruCache", true));
 
@@ -317,6 +327,7 @@ public final class DiskLruCache implements Closeable, Flushable {
       }
 
       int lineCount = 0;
+      // 逐行读取数据
       while (true) {
         try {
           readJournalLine(source.readUtf8LineStrict());
@@ -325,13 +336,16 @@ public final class DiskLruCache implements Closeable, Flushable {
           break;
         }
       }
+      // 读取出来的行数减去lruEntriest的集合的差值，即日志多出的"冗余"记录
       redundantOpCount = lineCount - lruEntries.size();
 
       // If we ended on a truncated line, rebuild the journal before appending to it.
       // 如果我们将一个line end，重新创建这个journal文件
-      if (!source.exhausted()) {
+      if (!source.exhausted()) { // exhausted 是否还多余字节，如果没有多余字节，返回true，有多月字节返回false
+        // 重新构建下journal文件
         rebuildJournal();
       } else {
+        // 获取这个文件的Sink
         journalWriter = newJournalWriter();
       }
     } finally {
@@ -498,10 +512,11 @@ public final class DiskLruCache implements Closeable, Flushable {
     Snapshot snapshot = entry.snapshot();
     if (snapshot == null) return null;
 
+    // 计数器自加1
     redundantOpCount++;
     // journalWriter向journal文件中写入一条READ记录
     journalWriter.writeUtf8(READ).writeByte(' ').writeUtf8(key).writeByte('\n');
-    if (journalRebuildRequired()) {
+    if (journalRebuildRequired()) { // 如果超过上限
       executor.execute(cleanupRunnable);
     }
 
@@ -547,7 +562,7 @@ public final class DiskLruCache implements Closeable, Flushable {
     // 在创建文件前来清空journal来组织文件泄漏
     // 把当前的key在journal文件里标记成dirty状态，表示这条记录正在被修改
     journalWriter.writeUtf8(DIRTY).writeByte(' ').writeUtf8(key).writeByte('\n');
-    journalWriter.flush();
+    journalWriter.flush(); // 调用edit以后就会写入dirty标志
 
     if (hasJournalErrors) {
       return null; // Don't edit; the journal can't be written.
@@ -631,11 +646,12 @@ public final class DiskLruCache implements Closeable, Flushable {
           fileSystem.rename(dirty, clean);
           long oldLength = entry.lengths[i];
           long newLength = fileSystem.size(clean);
+          // 更新 entry.lengths[i]
           entry.lengths[i] = newLength;
           size = size - oldLength + newLength;
         }
       } else {
-        // 删除
+        //删除dirty数据
         fileSystem.delete(dirty);
       }
     }
@@ -653,6 +669,7 @@ public final class DiskLruCache implements Closeable, Flushable {
         entry.sequenceNumber = nextSequenceNumber++;
       }
     } else {
+      // 写入remove
       lruEntries.remove(entry.key);
       journalWriter.writeUtf8(REMOVE).writeByte(' ');
       journalWriter.writeUtf8(entry.key);
@@ -671,6 +688,7 @@ public final class DiskLruCache implements Closeable, Flushable {
    * 2000 ops.
    */
   boolean journalRebuildRequired() {
+    // 最大计数单位
     final int redundantOpCompactThreshold = 2000;
     return redundantOpCount >= redundantOpCompactThreshold
         && redundantOpCount >= lruEntries.size();
@@ -695,23 +713,30 @@ public final class DiskLruCache implements Closeable, Flushable {
   }
 
   /**
-   * 移除entry
+   * 移除entry，写入remove
    * @param entry
    * @return
    * @throws IOException
    */
   boolean removeEntry(Entry entry) throws IOException {
     if (entry.currentEditor != null) {
+      // //让这个editor正常的结束
       entry.currentEditor.detach(); // Prevent the edit from completing normally.
     }
 
+
     for (int i = 0; i < valueCount; i++) {
+      // 删除entry对应的clean文件
       fileSystem.delete(entry.cleanFiles[i]);
+      // 缓存大小减去entry的小小
       size -= entry.lengths[i];
+      // 设置entry的缓存为0
       entry.lengths[i] = 0;
     }
 
+    // 计数器自加1
     redundantOpCount++;
+    // 在journalWriter添加一条删除记录
     journalWriter.writeUtf8(REMOVE).writeByte(' ').writeUtf8(entry.key).writeByte('\n');
     lruEntries.remove(entry.key);
 
@@ -765,6 +790,7 @@ public final class DiskLruCache implements Closeable, Flushable {
 
   void trimToSize() throws IOException {
     while (size > maxSize) {
+      // 删除 Entry
       Entry toEvict = lruEntries.values().iterator().next();
       removeEntry(toEvict);
     }
@@ -782,6 +808,7 @@ public final class DiskLruCache implements Closeable, Flushable {
   }
 
   /**
+   * 从缓存中删除所有值，In-flight中的eidt将正常完成，但是值不会被存储
    * Deletes all stored values from the cache. In-flight edits will complete normally but their
    * values will not be stored.
    */
@@ -872,9 +899,9 @@ public final class DiskLruCache implements Closeable, Flushable {
   /** A snapshot of the values for an entry. */
   public final class Snapshot implements Closeable {
     private final String key;
-    private final long sequenceNumber;
-    private final Source[] sources;
-    private final long[] lengths;
+    private final long sequenceNumber; // 序列号
+    private final Source[] sources; // 可以读入数据的流   这么多的流主要是从cleanFile中读取数据
+    private final long[] lengths; // 与上面的流一一对应
 
     Snapshot(String key, long sequenceNumber, Source[] sources, long[] lengths) {
       this.key = key;
@@ -888,6 +915,7 @@ public final class DiskLruCache implements Closeable, Flushable {
     }
 
     /**
+     *
      * Returns an editor for this snapshot's entry, or null if either the entry has changed since
      * this snapshot was created or if another edit is in progress.
      */
@@ -928,6 +956,9 @@ public final class DiskLruCache implements Closeable, Flushable {
      * an I/O error, or if the target entry is evicted while this editor is active. In either case
      * we delete the editor's created files and prevent new files from being created. Note that once
      * an editor has been detached it is possible for another editor to edit the entry.
+     * 阻止编辑器正常完成。
+     * 当编辑器(Editor)处于io操作的error的时候，或者editor正在被调用的时时目标条目被驱逐 这种阻止是必须的
+     * 我们需要删除编辑器创建的文件，并防止创建新的文件。如果编辑器被分离，其他的编辑器可以编辑这个Entry
      */
     void detach() {
       if (entry.currentEditor == this) {
@@ -943,6 +974,7 @@ public final class DiskLruCache implements Closeable, Flushable {
     }
 
     /**
+     * 获取cleanFile的输入流 在commit的时候把done设为true
      * Returns an unbuffered input stream to read the last committed value, or null if no value has
      * been committed.
      */
@@ -951,6 +983,7 @@ public final class DiskLruCache implements Closeable, Flushable {
         if (done) {
           throw new IllegalStateException();
         }
+        // 如果entry不可读，并且已经有编辑器了(其实就是dirty)
         if (!entry.readable || entry.currentEditor != this) {
           return null;
         }
@@ -963,6 +996,7 @@ public final class DiskLruCache implements Closeable, Flushable {
     }
 
     /**
+     * 获取dirty文件的输出流，如果在写入数据的时候出现错误，会立即停止。返回的输出流不会抛IO异常
      * Returns a new unbuffered output stream to write the value at {@code index}. If the underlying
      * output stream encounters errors when writing to the filesystem, this edit will be aborted
      * when {@link #commit} is called. The returned output stream does not throw IOExceptions.
@@ -972,12 +1006,16 @@ public final class DiskLruCache implements Closeable, Flushable {
         if (done) {
           throw new IllegalStateException();
         }
+        // 如果编辑器是不自己的，不能操作
         if (entry.currentEditor != this) {
           return Okio.blackhole();
         }
+
+        // 如果entry不可读，把对应的written设为true
         if (!entry.readable) {
           written[index] = true;
         }
+
         File dirtyFile = entry.dirtyFiles[index];
         Sink sink;
         try {
@@ -996,6 +1034,7 @@ public final class DiskLruCache implements Closeable, Flushable {
     }
 
     /**
+     * 把dirtyFiles里面的内容移动到cleanFiles里，这样才能够让别的editor访问到
      * Commits this edit so it is visible to readers.  This releases the edit lock so another edit
      * may be started on the same key.
      */
@@ -1028,6 +1067,9 @@ public final class DiskLruCache implements Closeable, Flushable {
       }
     }
 
+    /**
+     * 除非正在编辑，否则终止
+     */
     public void abortUnlessCommitted() {
       synchronized (DiskLruCache.this) {
         if (!done && entry.currentEditor == this) {
@@ -1049,17 +1091,17 @@ public final class DiskLruCache implements Closeable, Flushable {
     final File[] dirtyFiles;
 
     /** True if this entry has ever been published. */
-    boolean readable;
+    boolean readable; // 实体是否可读，可读为true，不可读为false
 
     /** The ongoing edit or null if this entry is not being edited. */
-    Editor currentEditor;
+    Editor currentEditor; // 编辑器，如果实体没有被编辑过，则为null
 
     /** The sequence number of the most recently committed edit to this entry. */
-    long sequenceNumber;
+    long sequenceNumber; // 最近提交的Entry的序列
 
     Entry(String key) {
       this.key = key;
-
+      // valueCount在构造DiskLruCache时传入的参数默认大小为2
       lengths = new long[valueCount];
       cleanFiles = new File[valueCount];
       dirtyFiles = new File[valueCount];
@@ -1069,9 +1111,9 @@ public final class DiskLruCache implements Closeable, Flushable {
       int truncateTo = fileBuilder.length();
       for (int i = 0; i < valueCount; i++) {
         fileBuilder.append(i);
-        cleanFiles[i] = new File(directory, fileBuilder.toString());
+        cleanFiles[i] = new File(directory, fileBuilder.toString());// key.1       key.2
         fileBuilder.append(".tmp");
-        dirtyFiles[i] = new File(directory, fileBuilder.toString());
+        dirtyFiles[i] = new File(directory, fileBuilder.toString());// key.1.tmp   key.2.tmp
         fileBuilder.setLength(truncateTo);
       }
     }
@@ -1109,10 +1151,14 @@ public final class DiskLruCache implements Closeable, Flushable {
      * different edits.
      */
     Snapshot snapshot() {
+      // 首先判断 线程是否有DiskLruCache对象的锁
       if (!Thread.holdsLock(DiskLruCache.this)) throw new AssertionError();
-
+      // new了一个Souce类型数组，容量为2
       Source[] sources = new Source[valueCount];
+      // clone一个long类型的数组，容量为2
       long[] lengths = this.lengths.clone(); // Defensive copy since these can be zeroed out.
+      // 获取cleanFile的Source，用于读取cleanFile中的数据，
+      // 并用得到的souce、Entry.key、Entry.length、sequenceNumber数据构造一个Snapshot对象
       try {
         for (int i = 0; i < valueCount; i++) {
           sources[i] = fileSystem.source(cleanFiles[i]);

@@ -168,6 +168,7 @@ public final class CacheInterceptor implements Interceptor {
       throws IOException {
     // Some apps return a null body; for compatibility we treat that like a null cache request.
     if (cacheRequest == null) return response;
+    // 写入body
     Sink cacheBodyUnbuffered = cacheRequest.body();
     if (cacheBodyUnbuffered == null) return response;
 
