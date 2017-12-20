@@ -136,6 +136,10 @@ public final class CacheControl {
     return isPublic;
   }
 
+  /**
+   * 对应 must-revalidate 告诉浏览器、缓存服务器，本地副本过期前，可以使用本地副本；本地副本一旦过期，必须去源服务器进行有效性校验。
+   * @return
+   */
   public boolean mustRevalidate() {
     return mustRevalidate;
   }
@@ -173,11 +177,16 @@ public final class CacheControl {
     return noTransform;
   }
 
+  /**
+   * immutable 表示响应内容将一直不会改变
+   * @return
+   */
   public boolean immutable() {
     return immutable;
   }
 
   /**
+   * 解析header信息
    * Returns the cache directives of {@code headers}. This honors both Cache-Control and Pragma
    * headers if they are present.
    */

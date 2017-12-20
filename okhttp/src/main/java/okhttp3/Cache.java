@@ -183,6 +183,11 @@ public final class Cache implements Closeable, Flushable {
     this.cache = DiskLruCache.create(fileSystem, directory, VERSION, ENTRY_COUNT, maxSize);
   }
 
+  /**
+   * url对应的key值 url --> md5 --> hex
+   * @param url
+   * @return
+   */
   public static String key(HttpUrl url) {
     return ByteString.encodeUtf8(url.toString()).md5().hex();
   }
@@ -218,9 +223,15 @@ public final class Cache implements Closeable, Flushable {
     return response;
   }
 
+  /**
+   * 只缓存get请求
+   * @param response
+   * @return
+   */
   @Nullable CacheRequest put(Response response) {
     String requestMethod = response.request().method();
-
+    // 判断请求如果是"POST"、"PATCH"、"PUT"、"DELETE"、"MOVE"中的任何一个
+    // 则调用DiskLruCache.remove(urlToKey(request));将这个请求从缓存中移除出去。
     if (HttpMethod.invalidatesCache(response.request().method())) {
       try {
         remove(response.request());
@@ -229,6 +240,10 @@ public final class Cache implements Closeable, Flushable {
       }
       return null;
     }
+    // 判断请求如果不是Get则不进行缓存，直接返回null。
+    // 官方给的解释是缓存get方法得到的Response效率高，其它方法的Response没有缓存效率低。
+    // 通常通过get方法获取到的数据都是固定不变的的，因此缓存效率自然就高了。
+    // 其它方法会根据请求报文参数的不同得到不同的Response，因此缓存效率自然而然就低了。
     if (!requestMethod.equals("GET")) {
       // Don't cache non-GET responses. We're technically allowed to cache
       // HEAD requests and some POST requests, but the complexity of doing
@@ -236,10 +251,12 @@ public final class Cache implements Closeable, Flushable {
       return null;
     }
 
+    // 判断请求中的http数据包中headers是否有符号"*"的通配符，有则不缓存直接返回null
     if (HttpHeaders.hasVaryAll(response)) {
       return null;
     }
 
+    // 由Response对象构建一个Entry对象
     Entry entry = new Entry(response);
     DiskLruCache.Editor editor = null;
     try {

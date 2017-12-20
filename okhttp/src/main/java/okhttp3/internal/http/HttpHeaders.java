@@ -113,6 +113,7 @@ public final class HttpHeaders {
   }
 
   /**
+   * 返回一个 response.request.header的子集，会影响response.body
    * Returns the subset of the headers in {@code response}'s request that impact the content of
    * response's body.
    */
