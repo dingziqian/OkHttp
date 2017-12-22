@@ -62,6 +62,7 @@ public final class Http2Codec implements HttpCodec {
   private static final ByteString UPGRADE = ByteString.encodeUtf8("upgrade");
 
   /** See http://tools.ietf.org/html/draft-ietf-httpbis-http2-09#section-8.1.3. */
+  // request里面的header组合
   private static final List<ByteString> HTTP_2_SKIPPED_REQUEST_HEADERS = Util.immutableList(
       CONNECTION,
       HOST,
@@ -75,6 +76,7 @@ public final class Http2Codec implements HttpCodec {
       TARGET_PATH,
       TARGET_SCHEME,
       TARGET_AUTHORITY);
+  // response 里面的的header组合
   private static final List<ByteString> HTTP_2_SKIPPED_RESPONSE_HEADERS = Util.immutableList(
       CONNECTION,
       HOST,
@@ -87,8 +89,11 @@ public final class Http2Codec implements HttpCodec {
 
   private final OkHttpClient client;
   private final Interceptor.Chain chain;
+  // 负责连接、请求、流的分配
   final StreamAllocation streamAllocation;
+  // HTTP/2.0 的连接
   private final Http2Connection connection;
+  // HTTP/2.0 的流
   private Http2Stream stream;
 
   public Http2Codec(OkHttpClient client, Interceptor.Chain chain, StreamAllocation streamAllocation,

@@ -47,6 +47,13 @@ import static okhttp3.internal.Util.checkOffsetAndCount;
 import static okhttp3.internal.http.StatusLine.HTTP_CONTINUE;
 
 /**
+ * HTTP/1.1 解析器，有如下的生命周期
+ * 发送请求头
+ * 写入请求体
+ * 关闭写入流
+ * 读取响应头
+ * 读取响应体
+ * 关闭读取流
  * A socket connection that can be used to send HTTP/1.1 messages. This class strictly enforces the
  * following lifecycle:
  *
@@ -79,11 +86,11 @@ public final class Http1Codec implements HttpCodec {
   /** The client that configures this stream. May be null for HTTPS proxy tunnels. */
   final OkHttpClient client;
   /** The stream allocation that owns this stream. May be null for HTTPS proxy tunnels. */
-  final StreamAllocation streamAllocation;
+  final StreamAllocation streamAllocation; // 连接流的桥梁
 
-  final BufferedSource source;
-  final BufferedSink sink;
-  int state = STATE_IDLE;
+  final BufferedSource source; // 输入流
+  final BufferedSink sink; // 输出流
+  int state = STATE_IDLE; // 状态
   private long headerLimit = HEADER_LIMIT;
 
   public Http1Codec(OkHttpClient client, StreamAllocation streamAllocation, BufferedSource source,
@@ -95,11 +102,12 @@ public final class Http1Codec implements HttpCodec {
   }
 
   @Override public Sink createRequestBody(Request request, long contentLength) {
+    // 非固定长度的请求体
     if ("chunked".equalsIgnoreCase(request.header("Transfer-Encoding"))) {
       // Stream a request body of unknown length.
       return newChunkedSink();
     }
-
+    // 固定长度的请求体
     if (contentLength != -1) {
       // Stream a request body of a known length.
       return newFixedLengthSink(contentLength);
@@ -109,12 +117,16 @@ public final class Http1Codec implements HttpCodec {
         "Cannot stream a request body without chunked encoding or a known content length!");
   }
 
+  /**
+   * cancel 对应的connection
+   */
   @Override public void cancel() {
     RealConnection connection = streamAllocation.connection();
     if (connection != null) connection.cancel();
   }
 
   /**
+   * 解析http的header并发送到服务器上
    * Prepares the HTTP headers and sends them to the server.
    *
    * <p>For streaming requests with a body, headers must be prepared <strong>before</strong> the
@@ -125,8 +137,10 @@ public final class Http1Codec implements HttpCodec {
    * header field receives the proper value.
    */
   @Override public void writeRequestHeaders(Request request) throws IOException {
+    // 获取 请求行
     String requestLine = RequestLine.get(
-        request, streamAllocation.connection().route().proxy().type());
+            request, streamAllocation.connection().route().proxy().type());
+    // 写入skin
     writeRequest(request.headers(), requestLine);
   }
 
@@ -134,18 +148,18 @@ public final class Http1Codec implements HttpCodec {
     streamAllocation.eventListener.responseBodyStart(streamAllocation.call);
     String contentType = response.header("Content-Type");
 
-    if (!HttpHeaders.hasBody(response)) {
+    if (!HttpHeaders.hasBody(response)) { // 没有请求体
       Source source = newFixedLengthSource(0);
       return new RealResponseBody(contentType, 0, Okio.buffer(source));
     }
 
-    if ("chunked".equalsIgnoreCase(response.header("Transfer-Encoding"))) {
+    if ("chunked".equalsIgnoreCase(response.header("Transfer-Encoding"))) { // 非固定长度
       Source source = newChunkedSource(response.request().url());
       return new RealResponseBody(contentType, -1L, Okio.buffer(source));
     }
 
     long contentLength = HttpHeaders.contentLength(response);
-    if (contentLength != -1) {
+    if (contentLength != -1) { // 固定长度
       Source source = newFixedLengthSource(contentLength);
       return new RealResponseBody(contentType, contentLength, Okio.buffer(source));
     }
@@ -158,6 +172,7 @@ public final class Http1Codec implements HttpCodec {
     return state == STATE_CLOSED;
   }
 
+  //  结束请求，将数据写入流
   @Override public void flushRequest() throws IOException {
     sink.flush();
   }
@@ -166,7 +181,10 @@ public final class Http1Codec implements HttpCodec {
     sink.flush();
   }
 
-  /** Returns bytes of a request header for sending on an HTTP transport. */
+  /**
+   * 将header写入sink
+   * Returns bytes of a request header for sending on an HTTP transport.
+   */
   public void writeRequest(Headers headers, String requestLine) throws IOException {
     if (state != STATE_IDLE) throw new IllegalStateException("state: " + state);
     sink.writeUtf8(requestLine).writeUtf8("\r\n");
@@ -186,8 +204,9 @@ public final class Http1Codec implements HttpCodec {
     }
 
     try {
+      // 状态行 HTTP/1.1 200 OK
       StatusLine statusLine = StatusLine.parse(readHeaderLine());
-
+      // 构建 Response.Builder
       Response.Builder responseBuilder = new Response.Builder()
           .protocol(statusLine.protocol)
           .code(statusLine.code)
@@ -197,7 +216,7 @@ public final class Http1Codec implements HttpCodec {
       if (expectContinue && statusLine.code == HTTP_CONTINUE) {
         return null;
       }
-
+      // 更新状态
       state = STATE_OPEN_RESPONSE_BODY;
       return responseBuilder;
     } catch (EOFException e) {
@@ -257,6 +276,7 @@ public final class Http1Codec implements HttpCodec {
   }
 
   /**
+   * 重置超时时间 使用此功能可避免共享连接之间出现意外的超时共享。
    * Sets the delegate of {@code timeout} to {@link Timeout#NONE} and resets its underlying timeout
    * to the default configuration. Use this to avoid unexpected sharing of timeouts between pooled
    * connections.
@@ -285,7 +305,7 @@ public final class Http1Codec implements HttpCodec {
     @Override public void write(Buffer source, long byteCount) throws IOException {
       if (closed) throw new IllegalStateException("closed");
       checkOffsetAndCount(source.size(), 0, byteCount);
-      if (byteCount > bytesRemaining) {
+      if (byteCount > bytesRemaining) {// 保证写数据时候数据长度是固定的
         throw new ProtocolException("expected " + bytesRemaining
             + " bytes but received " + byteCount);
       }
@@ -326,8 +346,10 @@ public final class Http1Codec implements HttpCodec {
       if (closed) throw new IllegalStateException("closed");
       if (byteCount == 0) return;
 
+      // 在第一行写入一段数据的长度
       sink.writeHexadecimalUnsignedLong(byteCount);
       sink.writeUtf8("\r\n");
+      // 写入长度
       sink.write(source, byteCount);
       sink.writeUtf8("\r\n");
     }
@@ -369,6 +391,7 @@ public final class Http1Codec implements HttpCodec {
     }
 
     /**
+     * 关闭缓存entry并设置socket设置为重用，当到达body末尾的时候应该被调用
      * Closes the cache entry and makes the socket available for reuse. This should be invoked when
      * the end of the body has been reached.
      */

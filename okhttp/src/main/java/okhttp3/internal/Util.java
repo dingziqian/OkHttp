@@ -227,6 +227,7 @@ public final class Util {
   }
 
   /**
+   * 对比两个String数组。必须每一个字符串都一样，才返回true
    * Returns true if there is an element in {@code first} that is also in {@code second}. This
    * method terminates if any intersection is found. The sizes of both arguments are assumed to be
    * so small, and the likelihood of an intersection so great, that it is not worth the CPU cost of

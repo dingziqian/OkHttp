@@ -30,6 +30,8 @@ import okhttp3.ConnectionSpec;
 import okhttp3.internal.Internal;
 
 /**
+ * 处理连接规范回退策略：当安全套接字连接由于握手/协议问题而失败时，可能会使用不同的协议重试连接。
+ * 当创建单个连接速的时候会被创建该了的实例。
  * Handles the connection spec fallback strategy: When a secure socket connection fails due to a
  * handshake / protocol problem the connection may be retried with different protocols. Instances
  * are stateful and should be created and used for a single connection attempt.
@@ -53,6 +55,7 @@ public final class ConnectionSpecSelector {
    * @throws IOException if the socket does not support any of the TLS modes available
    */
   public ConnectionSpec configureSecureSocket(SSLSocket sslSocket) throws IOException {
+    // 从OkHttp配置的ConnectionSpec集合中选择一个SSLSocket兼容的一个
     ConnectionSpec tlsConfiguration = null;
     for (int i = nextModeIndex, size = connectionSpecs.size(); i < size; i++) {
       ConnectionSpec connectionSpec = connectionSpecs.get(i);
@@ -74,7 +77,7 @@ public final class ConnectionSpecSelector {
     }
 
     isFallbackPossible = isFallbackPossible(sslSocket);
-
+    // 将选择的ConnectionSpec应用到SSLSocket上
     Internal.instance.apply(tlsConfiguration, sslSocket, isFallback);
 
     return tlsConfiguration;

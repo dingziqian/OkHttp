@@ -27,6 +27,11 @@ import static okhttp3.internal.Util.intersect;
 import static okhttp3.internal.Util.nonEmptyIntersection;
 
 /**
+ * 用于描述传输HTTP流量的socket连接的配置.
+ * 对于https请求，这些配置主要包括协商安全连接时要使用的TLS版本号和密码套件，是否支持TLS扩展等
+ * 连接规范中配置的TLS版本仅在SSL启用时才能使用，例如，如果SSL套接字没有启用TLS 1.3，即使它在连接规范中，它也不会被使用。
+ * 同样的政策也适用于密码套件。
+ *
  * Specifies configuration for the socket connection that HTTP traffic travels through. For {@code
  * https:} URLs, this includes the TLS version and cipher suites to use when negotiating a secure
  * connection.
@@ -65,7 +70,10 @@ public final class ConnectionSpec {
       CipherSuite.TLS_RSA_WITH_3DES_EDE_CBC_SHA,
   };
 
-  /** A modern TLS connection with extensions like SNI and ALPN available. */
+  /**
+   * 这个是okhttp默认的ConnectionSpec
+   * A modern TLS connection with extensions like SNI and ALPN available.
+   */
   public static final ConnectionSpec MODERN_TLS = new Builder(true)
       .cipherSuites(APPROVED_CIPHER_SUITES)
       .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2, TlsVersion.TLS_1_1, TlsVersion.TLS_1_0)
@@ -119,8 +127,9 @@ public final class ConnectionSpec {
 
   /** Applies this spec to {@code sslSocket}. */
   void apply(SSLSocket sslSocket, boolean isFallback) {
+    // 求得ConnectionSepc启动的TLS版本和密码套间与SSLSocket启动的TLS版本以及密码套间之间的交集，构造新的ConnectionSpec
     ConnectionSpec specToApply = supportedSpec(sslSocket, isFallback);
-
+    // 重新为SSLSocket设置启用的TLS版本及密码套间为上一步求得的交集。
     if (specToApply.tlsVersions != null) {
       sslSocket.setEnabledProtocols(specToApply.tlsVersions);
     }
@@ -130,6 +139,7 @@ public final class ConnectionSpec {
   }
 
   /**
+   *
    * Returns a copy of this that omits cipher suites and TLS versions not enabled by {@code
    * sslSocket}.
    */
@@ -158,6 +168,12 @@ public final class ConnectionSpec {
   }
 
   /**
+   * 如果socket支持这种连接规范，返回true，为了使套接字兼容，启用的密码套件和协议必须相交。
+   *
+   * 对于密码套件，至少有一个必须与套接字启用的密码套件相匹配。 如果没有必需的密码套件，套接字必须至少启用一个密码套件。
+   *
+   * 对于协议，至少有一个必须匹配套接字的启用协议。
+   *
    * Returns {@code true} if the socket, as currently configured, supports this connection spec. In
    * order for a socket to be compatible the enabled cipher suites and protocols must intersect.
    *

@@ -25,6 +25,7 @@ public final class RequestLine {
   }
 
   /**
+   * 返回请求状态行 例如 GET www.google.com HTTP/1.1
    * Returns the request status line, like "GET / HTTP/1.1". This is exposed to the application by
    * {@link HttpURLConnection#getHeaderFields}, so it needs to be set even if the transport is
    * HTTP/2.
@@ -45,6 +46,7 @@ public final class RequestLine {
   }
 
   /**
+   * 不是http是，并且 Proxy.Type.HTTP
    * Returns true if the request line should contain the full URL with host and port (like "GET
    * http://android.com/foo HTTP/1.1") or only the path (like "GET /foo HTTP/1.1").
    */

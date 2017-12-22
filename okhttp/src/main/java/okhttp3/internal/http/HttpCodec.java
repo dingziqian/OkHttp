@@ -21,7 +21,11 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import okio.Sink;
 
-/** Encodes HTTP requests and decodes HTTP responses. */
+/**
+ * http 解码器
+ * Encodes HTTP requests and decodes HTTP responses.
+ */
+
 public interface HttpCodec {
   /**
    * The timeout to use while discarding a stream of input data. Since this is used for connection
@@ -30,19 +34,33 @@ public interface HttpCodec {
    */
   int DISCARD_STREAM_TIMEOUT_MILLIS = 100;
 
-  /** Returns an output stream where the request body can be streamed. */
+  /**
+   * 创建请求体用到的流
+   * Returns an output stream where the request body can be streamed.
+   */
   Sink createRequestBody(Request request, long contentLength);
 
-  /** This should update the HTTP engine's sentRequestMillis field. */
+  /**
+   * 写入请求头，将会更新http引擎的 sentRequestMillis 字段
+   * This should update the HTTP engine's sentRequestMillis field.
+   */
   void writeRequestHeaders(Request request) throws IOException;
 
-  /** Flush the request to the underlying socket. */
+  /**
+   * 相当于flush,把请求刷入底层socke
+   * Flush the request to the underlying socket.
+   */
   void flushRequest() throws IOException;
 
-  /** Flush the request to the underlying socket and signal no more bytes will be transmitted. */
+  /**
+   * 相当于flush，把请求输入底层socket并不在发出请求
+   * Flush the request to the underlying socket and signal no more bytes will be transmitted.
+   */
   void finishRequest() throws IOException;
 
   /**
+   * 读取响应头
+   *
    * Parses bytes of a response header from an HTTP transport.
    *
    * @param expectContinue true to return null if this is an intermediate response with a "100"
@@ -50,10 +68,14 @@ public interface HttpCodec {
    */
   Response.Builder readResponseHeaders(boolean expectContinue) throws IOException;
 
-  /** Returns a stream that reads the response body. */
+  /**
+   * 读取响应体
+   * Returns a stream that reads the response body.
+   */
   ResponseBody openResponseBody(Response response) throws IOException;
 
   /**
+   * 取消请求
    * Cancel this stream. Resources held by this stream will be cleaned up, though not synchronously.
    * That may happen later by the connection pool thread.
    */
